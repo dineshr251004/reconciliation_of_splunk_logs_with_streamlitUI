@@ -162,25 +162,14 @@ class SPLQueryGenerator:
         earliest_clause = f"earliest={time_range}" if time_range != "0" else "earliest=0"
         
         # A Query that looks for the process name in multiple fields
-        spl_query = f'''search index={index} {earliest_clause} (process_name="*{process_name}*" OR message="*{process_name}*" OR _raw="*{process_name}*")
-                    | table _time, correlation_id, application, process_name, log_level, message, details, user_id, session_id, request_id, host
-                    | sort _time
-                    | head {max_results}'''
-        
+        spl_query = f'''index={index} {earliest_clause} 
+                        (process_name="*{process_name}*" OR message="*{process_name}*" OR _raw="*{process_name}*") 
+                        | dedup correlation_id 
+                        | map maxsearches={max_results} search="search index={index} {earliest_clause} correlation_id=\"$correlation_id$\" | table _time, correlation_id, application, process_name, log_level, message, details, user_id, session_id, request_id, host"
+                        | sort correlation_id, _time
+                    '''        
         return spl_query
-    def generate_corrid_query(self, corr_list: str, time_range: str = "0", 
-                              index: str = "main", max_results: int = 10000) -> str:
-        """Generate SPL query to find logs for a specific process"""
-        
-        earliest_clause = f"earliest={time_range}" if time_range != "0" else "earliest=0"
-        
-        # A Query that looks for the process name in multiple fields
-        spl_query = f'''search index={index} {earliest_clause} correlation_id IN {corr_list}
-                    | table _time, correlation_id, application, process_name, log_level, message, details, user_id, session_id, request_id, host
-                    | sort _time
-                    | head {max_results}'''
-        
-        return spl_query
+
 
 class SplunkSDKConnector:
     """Connector to interact with Splunk using the official Splunk SDK"""
@@ -521,36 +510,14 @@ class SplunkLogAnalysis:
         
         # Group by correlation ID
         logs_by_correlation = defaultdict(list)
-        corr_id_list = list()
         for result in results:
             correlation_id = result.get('correlation_id', 'unknown')
-            corr_id_list.append(correlation_id)
             logs_by_correlation[correlation_id].append(result)
             
             # Track applications
             app = result.get('application', 'unknown')
             if app:
-                self.applications.add(app)
-
-        print(f"Retrieving logs for the correlation IDs")
-        
-        corr_id_str = '("' + '","'.join(corr_id_list) + '")'
-        query = self.query_generator.generate_corrid_query(
-            corr_id_str, 
-            index=self.splunk.config.index,
-            max_results=max_results
-        )
-        
-        results = self.run_custom_query(query, max_results)
-
-        logs_by_correlation = defaultdict(list)
-        for result in results:
-            correlation_id = result.get('correlation_id', 'unknown')
-            logs_by_correlation[correlation_id].append(result)
-
-            app = result.get('application', 'unknown')
-            if app:
-                self.applications.add(app)        
+                self.applications.add(app)     
         
         # Sort logs within each correlation ID by timestamp
         for correlation_id in logs_by_correlation:
