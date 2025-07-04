@@ -156,18 +156,31 @@ class SPLQueryGenerator:
         return query
     
     def generate_process_query(self, process_name: str, time_range: str = "0", 
-                              index: str = "main", max_results: int = 10000) -> str:
-        """Generate SPL query to find logs for a specific process"""
+                        index: str = "main", max_results: int = 10000, 
+                        start_date: str = None, end_date: str = None) -> str:
+        """Generate SPL query to find logs for a specific process with optional date range"""
         
-        earliest_clause = f"earliest={time_range}" if time_range != "0" else "earliest=0"
+        # Handle date range - improved logic
+        time_clause = ""
+        if start_date and end_date:
+            time_clause = f'earliest="{start_date}" latest="{end_date}"'
+        elif start_date:
+            time_clause = f'earliest="{start_date}"'
+        elif end_date:
+            time_clause = f'latest="{end_date}"'
+        elif time_range != "0":
+            time_clause = f"earliest={time_range}"
+        else:
+            time_clause = "earliest=0"
         
-        # A Query that looks for the process name in multiple fields
-        spl_query = f'''index={index} {earliest_clause} 
+        # Build the query with proper time clause integration
+        spl_query = f'''search index={index} {time_clause} 
                         (process_name="*{process_name}*" OR message="*{process_name}*" OR _raw="*{process_name}*") 
                         | dedup correlation_id 
-                        | map maxsearches={max_results} search="search index={index} {earliest_clause} correlation_id=\"$correlation_id$\" | table _time, correlation_id, application, process_name, log_level, message, details, user_id, session_id, request_id, host"
+                        | map maxsearches={max_results} search="search index={index} earliest=0 correlation_id=\\"$correlation_id$\\" | table _time, correlation_id, application, process_name, log_level, message, details, user_id, session_id, request_id, host"
                         | sort correlation_id, _time
-                    '''        
+                    '''
+        
         return spl_query
 
 
@@ -495,15 +508,21 @@ class SplunkLogAnalysis:
         match = self.process_matcher.find_best_matches(user_input,available_processes)
         return match[0]
     
-    def retrieve_logs_by_process(self, process_name: str, max_results: int = 10000) -> Dict[str, List[Dict]]:
+    def retrieve_logs_by_process(self, process_name: str, max_results: int = 10000, 
+                            start_date: str = None, end_date: str = None) -> Dict[str, List[Dict]]:
         """Retrieve logs for a specific process, grouped by correlation ID"""
         print(f"Retrieving logs for process: {process_name}")
+        
+        if start_date or end_date:
+            print(f"Date range: {start_date} to {end_date}")
         
         # Query for all logs related to this process
         query = self.query_generator.generate_process_query(
             process_name, 
             index=self.splunk.config.index,
-            max_results=max_results
+            max_results=max_results,
+            start_date=start_date,
+            end_date=end_date
         )
         
         results = self.run_custom_query(query, max_results)
@@ -694,7 +713,7 @@ class SplunkLogAnalysis:
         
         return results
     
-    def analyze_process_by_name_batch(self, user_input: str, batch_size: int = 5, max_results: int = 10000) -> pd.DataFrame:
+    def analyze_process_by_name_batch(self, user_input: str, batch_size: int = 5, max_results: int = 10000, start_date: str = None, end_date: str = None) -> pd.DataFrame:
         """Analyze process using batch processing with Splunk data"""
         print(f"\n")
         print(f"BATCH ANALYZING PROCESS: {user_input.upper()} (Batch Size: {batch_size})")
@@ -710,9 +729,8 @@ class SplunkLogAnalysis:
         # Best match for analysis
         best_match = matching_processes[0]
         print(f"\nBest match: {best_match}")
-        
         # Retrieve logs for the best matching process
-        all_correlation_logs = self.retrieve_logs_by_process(best_match, max_results)
+        all_correlation_logs = self.retrieve_logs_by_process(best_match, max_results,start_date=start_date,end_date=end_date)
         
         if not all_correlation_logs:
             print("No logs found for matching process")
@@ -721,7 +739,7 @@ class SplunkLogAnalysis:
         # Determine involved applications
         involved_apps = sorted(list(self.applications))
         print(f"Involved applications: {involved_apps}")
-        print(f"Processing {len(all_correlation_logs)} workflow instances in batches of {batch_size}...")
+        print(f"Processing {len(all_correlation_logs)} correlation IDs in batches of {batch_size}...")
         
         # Analysis using LLM
         batch_results = self.analyze_logs_batch_with_llm(all_correlation_logs, best_match, batch_size)
@@ -743,9 +761,9 @@ class SplunkLogAnalysis:
         return df
     
     def generate_process_report_batch(self, user_input: str, batch_size: int = 5, 
-                                    max_results: int = 10000) -> pd.DataFrame:
+                                    max_results: int = 10000, start_date: str = None, end_date: str = None) -> pd.DataFrame:
         """Generate batch analysis report for a process"""
-        df = self.analyze_process_by_name_batch(user_input, batch_size, max_results)
+        df = self.analyze_process_by_name_batch(user_input, batch_size, max_results, start_date= start_date, end_date=end_date)
         
         if df.empty:
             return df
