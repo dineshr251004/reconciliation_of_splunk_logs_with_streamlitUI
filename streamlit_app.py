@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import io
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 import traceback
 
 try:
@@ -62,6 +62,13 @@ st.markdown("""
         border-radius: 5px;
         margin: 1rem 0;
     }
+    .date-selector {
+        background-color: #fff;
+        padding: 1rem;
+        border-radius: 8px;
+        border: 1px solid #ddd;
+        margin: 0.5rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -105,22 +112,22 @@ def calculate_correlation_status(df):
     """
     app_columns = [col for col in df.columns if col != 'correlation_id']
     
-    def get_workflow_status(row):
+    def get_corr_status(row):
         app_statuses = [row[col] for col in app_columns]
         
-        # If any application failed, the entire workflow failed
+        # If any application failed, the entire process failed
         if 'FAILURE' in app_statuses:
             return 'FAILED'
         
-        # If any application is incomplete, the workflow is incomplete
+        # If any application is incomplete, the process is incomplete
         if 'INCOMPLETE' in app_statuses:
             return 'INCOMPLETE'
         
-        # If all applications have no logs, workflow has no logs
+        # If all applications have no logs, process has no logs
         if all(status == 'NO_LOGS' for status in app_statuses):
             return 'NO_LOGS'
         
-        # If all non-NO_LOGS applications are successful, workflow is successful
+        # If all non-NO_LOGS applications are successful, process is successful
         non_no_logs_statuses = [status for status in app_statuses if status != 'NO_LOGS']
         if non_no_logs_statuses and all(status == 'SUCCESS' for status in non_no_logs_statuses):
             return 'SUCCESS'
@@ -129,23 +136,29 @@ def calculate_correlation_status(df):
         return 'INCOMPLETE'
     
     # Apply the function to each row
-    df['workflow_status'] = df.apply(get_workflow_status, axis=1)
+    df['overall_status'] = df.apply(get_corr_status, axis=1)
     return df
 
 def get_correlation_metrics(df):
     """Calculate metrics based on correlation ID status"""
-    if 'workflow_status' not in df.columns:
+    if 'overall_status' not in df.columns:
         df = calculate_correlation_status(df)
     
-    status_counts = df['workflow_status'].value_counts()
+    status_counts = df['overall_status'].value_counts()
     
     return {
-        'total_workflows': len(df),
-        'successful_workflows': status_counts.get('SUCCESS', 0),
-        'failed_workflows': status_counts.get('FAILED', 0),
-        'incomplete_workflows': status_counts.get('INCOMPLETE', 0),
-        'no_logs_workflows': status_counts.get('NO_LOGS', 0)
+        'total': len(df),
+        'successful': status_counts.get('SUCCESS', 0),
+        'failed': status_counts.get('FAILED', 0),
+        'incomplete': status_counts.get('INCOMPLETE', 0),
     }
+
+def format_date_for_splunk(date_obj):
+    """Format date for Splunk query - MM/DD/YYYY:HH:MM:SS format"""
+    if date_obj:
+        # Convert to MM/DD/YYYY:HH:MM:SS format
+        return date_obj.strftime("%m/%d/%Y:%H:%M:%S")
+    return None
 
 def display_sample_logs():
     """Display sample log records"""
@@ -249,14 +262,82 @@ def main():
                     help="Enter the name of the process you want to analyze"
                 )
                 
+                # Date selection section
+                st.markdown('<div class="date-selector">', unsafe_allow_html=True)
+                st.subheader("📅 Date Range Selection")
+                
+                # Date range options
+                date_option = st.selectbox(
+                    "Select date range:",
+                    ["All Time", "Today", "Yesterday", "Last 7 Days", "Last 30 Days", "Custom Range"],
+                    help="Choose the time period for log analysis"
+                )
+                
+                start_date = None
+                end_date = None
+                
+                if date_option == "Today":
+                    start_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                    end_date = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
+                elif date_option == "Yesterday":
+                    yesterday = datetime.now() - timedelta(days=1)
+                    start_date = yesterday.replace(hour=0, minute=0, second=0, microsecond=0)
+                    end_date = yesterday.replace(hour=23, minute=59, second=59, microsecond=999999)
+                elif date_option == "Last 7 Days":
+                    end_date = datetime.now()
+                    start_date = end_date - timedelta(days=7)
+                elif date_option == "Last 30 Days":
+                    end_date = datetime.now()
+                    start_date = end_date - timedelta(days=30)
+                elif date_option == "Custom Range":
+                    col_start, col_end = st.columns(2)
+                    with col_start:
+                        start_date = st.date_input(
+                            "Start Date:",
+                            value=datetime.now().date() - timedelta(days=7),
+                            help="Select the start date for analysis"
+                        )
+                        if start_date:
+                            start_date = datetime.combine(start_date, datetime.min.time())
+                    
+                    with col_end:
+                        end_date = st.date_input(
+                            "End Date:",
+                            value=datetime.now().date(),
+                            help="Select the end date for analysis"
+                        )
+                        if end_date:
+                            end_date = datetime.combine(end_date, datetime.max.time())
+                
+                # Display selected date range
+                if start_date and end_date and date_option != "All Time":
+                    st.info(f"📅 Selected Range: {start_date.strftime('%Y-%m-%d %H:%M')} to {end_date.strftime('%Y-%m-%d %H:%M')}")
+                elif date_option == "All Time":
+                    st.info("📅 Selected Range: All available data")
+                
+                st.markdown('</div>', unsafe_allow_html=True)
+                
                 if st.button("🚀 Analyze Process", type="primary"):
                     if process_name:
+                        # Format dates for Splunk - improved formatting
+                        splunk_start_date = None
+                        splunk_end_date = None
+                        
+                        if start_date and date_option != "All Time":
+                            splunk_start_date = format_date_for_splunk(start_date)
+                        if end_date and date_option != "All Time":
+                            splunk_end_date = format_date_for_splunk(end_date)
+                        
                         with st.spinner(f"Analyzing process: {process_name}..."):
                             try:
                                 if analyzer:
-                                    # Real analysis
+                                    # Real analysis with date range
                                     df = analyzer.generate_process_report_batch(
-                                        process_name, batch_size, max_results
+                                        process_name, 
+                                        batch_size, 
+                                        max_results,
+                                        start_date=splunk_start_date, 
+                                        end_date=splunk_end_date
                                     )
                                 else:
                                     # Demo mode - use sample data
@@ -266,9 +347,12 @@ def main():
                                 if not df.empty:
                                     st.session_state['analysis_results'] = df
                                     st.session_state['process_name'] = process_name
+                                    st.session_state['date_range'] = date_option
+                                    st.session_state['start_date'] = start_date
+                                    st.session_state['end_date'] = end_date
                                     st.success(f"✅ Analysis completed for '{process_name}'!")
                                 else:
-                                    st.error("❌ No data found for the specified process")
+                                    st.error("❌ No data found for the specified process and date range")
                                     
                             except Exception as e:
                                 st.error(f"❌ Error during analysis: {str(e)}")
@@ -283,6 +367,60 @@ def main():
                     help="Enter your custom Splunk SPL query"
                 )
                 
+                # Date selection for custom queries
+                st.markdown('<div class="date-selector">', unsafe_allow_html=True)
+                st.subheader("📅 Date Range for Query")
+                
+                query_date_option = st.selectbox(
+                    "Select date range for query:",
+                    ["All Time", "Today", "Yesterday", "Last 7 Days", "Last 30 Days", "Custom Range"],
+                    help="Choose the time period for custom query"
+                )
+                
+                query_start_date = None
+                query_end_date = None
+                
+                if query_date_option == "Today":
+                    query_start_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                    query_end_date = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
+                elif query_date_option == "Yesterday":
+                    yesterday = datetime.now() - timedelta(days=1)
+                    query_start_date = yesterday.replace(hour=0, minute=0, second=0, microsecond=0)
+                    query_end_date = yesterday.replace(hour=23, minute=59, second=59, microsecond=999999)
+                elif query_date_option == "Last 7 Days":
+                    query_end_date = datetime.now()
+                    query_start_date = query_end_date - timedelta(days=7)
+                elif query_date_option == "Last 30 Days":
+                    query_end_date = datetime.now()
+                    query_start_date = query_end_date - timedelta(days=30)
+                elif query_date_option == "Custom Range":
+                    col_start, col_end = st.columns(2)
+                    with col_start:
+                        query_start_date = st.date_input(
+                            "Query Start Date:",
+                            value=datetime.now().date() - timedelta(days=7),
+                            key="query_start_date"
+                        )
+                        if query_start_date:
+                            query_start_date = datetime.combine(query_start_date, datetime.min.time())
+                    
+                    with col_end:
+                        query_end_date = st.date_input(
+                            "Query End Date:",
+                            value=datetime.now().date(),
+                            key="query_end_date"
+                        )
+                        if query_end_date:
+                            query_end_date = datetime.combine(query_end_date, datetime.max.time())
+                
+                # Display selected date range for query
+                if query_start_date and query_end_date and query_date_option != "All Time":
+                    st.info(f"📅 Query Range: {query_start_date.strftime('%Y-%m-%d %H:%M')} to {query_end_date.strftime('%Y-%m-%d %H:%M')}")
+                elif query_date_option == "All Time":
+                    st.info("📅 Query Range: All available data")
+                
+                st.markdown('</div>', unsafe_allow_html=True)
+                
                 query_max_results = st.number_input("Max Results for Query:", min_value=1, max_value=10000, value=100)
                 
                 if st.button("🔍 Execute Query", type="primary"):
@@ -290,10 +428,24 @@ def main():
                         with st.spinner("Executing SPL query..."):
                             try:
                                 if analyzer:
-                                    results = analyzer.run_custom_query(spl_query, query_max_results)
+                                    # Add date range to query if specified
+                                    modified_query = spl_query
+                                    if query_start_date and query_end_date and query_date_option != "All Time":
+                                        splunk_start = format_date_for_splunk(query_start_date)
+                                        splunk_end = format_date_for_splunk(query_end_date)
+                                        
+                                        # Add date range to query if not already present
+                                        if "earliest=" not in modified_query.lower() and "latest=" not in modified_query.lower():
+                                            if modified_query.startswith("search "):
+                                                modified_query = f'search earliest="{splunk_start}" latest="{splunk_end}" {modified_query[7:]}'
+                                            else:
+                                                modified_query = f'search earliest="{splunk_start}" latest="{splunk_end}" {modified_query}'
+                                    
+                                    results = analyzer.run_custom_query(modified_query, query_max_results)
                                     if results:
                                         df = pd.DataFrame(results)
                                         st.session_state['query_results'] = df
+                                        st.session_state['query_date_range'] = query_date_option
                                         st.success(f"✅ Query executed successfully! Found {len(results)} results.")
                                     else:
                                         st.warning("⚠️ Query returned no results")
@@ -334,38 +486,42 @@ def main():
         if 'analysis_results' in st.session_state:
             df = st.session_state['analysis_results']
             process_name = st.session_state.get('process_name', 'unknown')
+            date_range = st.session_state.get('date_range', 'All Time')
+            start_date = st.session_state.get('start_date')
+            end_date = st.session_state.get('end_date')
             
             st.subheader(f"📈 Analysis Results for '{process_name}'")
+            
+            # Display date range info
+            if date_range != "All Time" and start_date and end_date:
+                st.info(f"📅 Date Range: {start_date.strftime('%Y-%m-%d %H:%M')} to {end_date.strftime('%Y-%m-%d %H:%M')}")
+            else:
+                st.info("📅 Date Range: All available data")
             
             # Calculate correlation-based metrics
             metrics = get_correlation_metrics(df)
             
             # Summary metrics based on correlation IDs
-            col1, col2, col3, col4, col5 = st.columns(5)
+            col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.metric("Total Workflows", metrics['total_workflows'])
+                st.metric("Total", metrics['total'])
             
             with col2:
-                success_rate = (metrics['successful_workflows'] / metrics['total_workflows'] * 100) if metrics['total_workflows'] > 0 else 0
-                st.metric("Successful Workflows", metrics['successful_workflows'], 
+                success_rate = (metrics['successful'] / metrics['total'] * 100) if metrics['total'] > 0 else 0
+                st.metric("Successful", metrics['successful'], 
                          delta=f"{success_rate:.1f}%")
             
             with col3:
-                failure_rate = (metrics['failed_workflows'] / metrics['total_workflows'] * 100) if metrics['total_workflows'] > 0 else 0
-                st.metric("Failed Workflows", metrics['failed_workflows'], 
-                         delta=f"{failure_rate:.1f}%")
+                failure_rate = (metrics['failed'] / metrics['total'] * 100) if metrics['total'] > 0 else 0
+                st.metric("Failed", metrics['failed'], 
+                         delta=f"-{failure_rate:.1f}%")
             
             with col4:
-                incomplete_rate = (metrics['incomplete_workflows'] / metrics['total_workflows'] * 100) if metrics['total_workflows'] > 0 else 0
-                st.metric("Incomplete Workflows", metrics['incomplete_workflows'], 
-                         delta=f"{incomplete_rate:.1f}%")
+                incomplete_rate = (metrics['incomplete'] / metrics['total'] * 100) if metrics['total'] > 0 else 0
+                st.metric("Incomplete", metrics['incomplete'], 
+                         delta=f"-{incomplete_rate:.1f}%")
             
-            with col5:
-                no_logs_rate = (metrics['no_logs_workflows'] / metrics['total_workflows'] * 100) if metrics['total_workflows'] > 0 else 0
-                st.metric("No Logs Workflows", metrics['no_logs_workflows'], 
-                         delta=f"{no_logs_rate:.1f}%")
-            
-            # Add workflow status to DataFrame for display and download
+            # Add process status to DataFrame for display and download
             df_with_status = calculate_correlation_status(df.copy())
             
             # Download button
@@ -384,7 +540,7 @@ def main():
                 type="primary"
             )
             
-            # Display the dataframe with workflow status
+            # Display the dataframe with process status
             st.subheader("📊 Detailed Results")
             st.dataframe(df_with_status, use_container_width=True)
             
@@ -401,28 +557,19 @@ def main():
                             st.write(f"**{app}:**")
                         with col2:
                             st.write(app_summary.to_dict())
-                
-                # Workflow status summary
-                st.subheader("📋 Workflow Status Summary")
-                workflow_summary = df_with_status['workflow_status'].value_counts()
-                
-                # Create a nice display for workflow status
-                status_colors = {
-                    'SUCCESS': '🟢',
-                    'FAILED': '🔴', 
-                    'INCOMPLETE': '🟡',
-                    'NO_LOGS': '⚪'
-                }
-                
-                for status, count in workflow_summary.items():
-                    percentage = (count / len(df_with_status)) * 100
-                    color = status_colors.get(status, '⚫')
-                    st.write(f"{color} **{status}**: {count} workflows ({percentage:.1f}%)")
         
         # Display query results
         elif 'query_results' in st.session_state:
             df = st.session_state['query_results']
+            query_date_range = st.session_state.get('query_date_range', 'All Time')
+            
             st.subheader("🔍 Query Results")
+            
+            # Display date range info for query
+            if query_date_range != "All Time":
+                st.info(f"📅 Query Date Range: {query_date_range}")
+            else:
+                st.info("📅 Query Date Range: All available data")
             
             # Download button for query results
             csv_buffer = io.StringIO()
@@ -453,17 +600,15 @@ def main():
             # Show sample metrics
             sample_metrics = get_correlation_metrics(sample_df)
             
-            col1, col2, col3, col4, col5 = st.columns(5)
+            col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.metric("Sample Workflows", sample_metrics['total_workflows'])
+                st.metric("Sample", sample_metrics['total'])
             with col2:
-                st.metric("Sample Successful", sample_metrics['successful_workflows'])
+                st.metric("Sample Successful", sample_metrics['successful'])
             with col3:
-                st.metric("Sample Failed", sample_metrics['failed_workflows'])
+                st.metric("Sample Failed", sample_metrics['failed'])
             with col4:
-                st.metric("Sample Incomplete", sample_metrics['incomplete_workflows'])
-            with col5:
-                st.metric("Sample No Logs", sample_metrics['no_logs_workflows'])
+                st.metric("Sample Incomplete", sample_metrics['incomplete'])
             
             st.dataframe(sample_df_with_status, use_container_width=True)
             
