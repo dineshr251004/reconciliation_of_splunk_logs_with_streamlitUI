@@ -195,6 +195,15 @@ def display_sample_logs():
     st.subheader("📋 Sample Log Records")
     st.dataframe(pd.DataFrame(sample_logs), use_container_width=True)
 
+def color_row_based_on_status(row):
+    status = row['overall_status']
+    if status == 'FAILED':
+        return ['color: red'] * len(row)
+    elif status == 'INCOMPLETE':
+        return ['color: orange'] * len(row)
+    else:
+        return [''] * len(row)
+
 def main():
     try:
         # Header
@@ -541,7 +550,8 @@ def main():
             
             # Display the dataframe with process status
             st.subheader("📊 Detailed Results")
-            st.dataframe(df_with_status, use_container_width=True)
+            styled_df = df_with_status.style.apply(color_row_based_on_status, axis=1)
+            st.dataframe(styled_df, use_container_width=True)
             
             # Application-wise summary
             if len(df.columns) > 1:
