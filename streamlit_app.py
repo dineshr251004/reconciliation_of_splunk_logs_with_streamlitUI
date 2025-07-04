@@ -263,7 +263,6 @@ def main():
                 )
                 
                 # Date selection section
-                st.markdown('<div class="date-selector">', unsafe_allow_html=True)
                 st.subheader("📅 Date Range Selection")
                 
                 # Date range options
