@@ -150,7 +150,7 @@ def get_correlation_metrics(df):
         'total': len(df),
         'successful': status_counts.get('SUCCESS', 0),
         'failed': status_counts.get('FAILED', 0),
-        'incomplete': status_counts.get('INCOMPLETE', 0),
+        'incomplete': status_counts.get('INCOMPLETE', 0) + status_counts.get('NO_LOGS', 0),
     }
 
 def format_date_for_splunk(date_obj):
@@ -195,14 +195,15 @@ def display_sample_logs():
     st.subheader("📋 Sample Log Records")
     st.dataframe(pd.DataFrame(sample_logs), use_container_width=True)
 
-def color_row_based_on_status(row):
-    status = row['overall_status']
-    if status == 'FAILED':
-        return ['color: red'] * len(row)
-    elif status == 'INCOMPLETE':
-        return ['color: orange'] * len(row)
-    else:
-        return [''] * len(row)
+def highlight_overall_status_column(col):
+    return [
+        'color: red; font-weight: bold' if val == 'FAILED' else
+        'color: orange; font-weight: bold' if val == 'INCOMPLETE' else
+        'color: green; font-weight: bold' if val == 'SUCCESS' else
+        'color: gray; font-weight: bold' if val == 'NO_LOGS' else
+        ''
+        for val in col
+    ]
 
 def main():
     try:
@@ -550,7 +551,11 @@ def main():
             
             # Display the dataframe with process status
             st.subheader("📊 Detailed Results")
-            styled_df = df_with_status.style.apply(color_row_based_on_status, axis=1)
+            styled_df = df_with_status.style.apply(
+                            highlight_overall_status_column,
+                            subset=['overall_status']
+                        )
+
             st.dataframe(styled_df, use_container_width=True)
             
             # Application-wise summary
