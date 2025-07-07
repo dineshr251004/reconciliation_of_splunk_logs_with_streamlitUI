@@ -737,7 +737,7 @@ class SplunkLogAnalysis:
             return pd.DataFrame()
         
         # Determine involved applications
-        involved_apps = sorted(list(self.applications))
+        involved_apps = list(self.applications)
         print(f"Involved applications: {involved_apps}")
         print(f"Processing {len(all_correlation_logs)} correlation IDs in batches of {batch_size}...")
         
