@@ -359,7 +359,7 @@ def main():
                                     st.session_state['date_range'] = date_option
                                     st.session_state['start_date'] = start_date
                                     st.session_state['end_date'] = end_date
-                                    st.success(f"✅ Analysis completed for '{process_name}'!")
+                                    st.success(f"Analysis completed for '{process_name}'!")
                                 else:
                                     st.error("❌ No data found for the specified process and date range")
                                     
@@ -542,7 +542,7 @@ def main():
             filename = f"{process_name}_analysis_{timestamp}.csv"
             
             st.download_button(
-                label="📥 Download Analysis Report (CSV)",
+                label="Download Analysis Report (CSV)",
                 data=csv_data,
                 file_name=filename,
                 mime="text/csv",
